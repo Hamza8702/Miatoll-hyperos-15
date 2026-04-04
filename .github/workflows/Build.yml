@@ -1,0 +1,98 @@
+name: Miatoll Kernel Build (KVM + ccache)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  kernel-build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc build-essential flex bison lld llvm libssl-dev libelf-dev \
+          cpio wget curl git zip unzip tar clang lld ccache pahole
+
+      - name: Setup ccache
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/ccache
+          key: kernel-24.04-ccache-${{ github.sha }}
+          restore-keys: |
+            kernel-24.04-ccache-
+
+      - name: Setup Toolchains
+        run: |
+          # Use reliable mirrors to avoid 'Username' prompts or private repo errors
+          git clone --depth=1 https://gitlab.com/copy-pasta/google-clang.git -b clang-17 clang
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 gcc64
+          git clone --depth=1 https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 gcc32
+
+      - name: Build Kernel
+        run: |
+          # ccache Configuration
+          export USE_CCACHE=1
+          export CCACHE_EXEC=/usr/bin/ccache
+          export CCACHE_DIR=/home/runner/.cache/ccache
+          ccache -M 5G
+          ccache -z
+
+          # Environment Variables
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export KBUILD_BUILD_HOST=ubuntu-24-04-actions
+          export KBUILD_BUILD_USER="Ayse"
+          export PATH="${PWD}/clang/bin:${PWD}/gcc64/bin:${PWD}/gcc32/bin:${PATH}"
+          
+          # 1. Initialize Defconfig
+          make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig
+          
+          # 2. Inject KVM Configurations
+          ./scripts/config --file out/.config -e KVM
+          ./scripts/config --file out/.config -e VIRTUALIZATION
+          ./scripts/config --file out/.config -e KVM_ARM_HOST
+          ./scripts/config --file out/.config -e KVM_ARM_PMU
+          
+          # Re-sync config
+          make O=out ARCH=arm64 olddefconfig
+
+          # 3. Start Compilation with LLVM/Clang
+          make -j$(nproc --all) O=out \
+            ARCH=arm64 \
+            CC="ccache clang" \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-android- \
+            CROSS_COMPILE_ARM32=arm-linux-androideabi- \
+            LD=ld.lld \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CONFIG_NO_ERROR_ON_MISMATCH=y
+          
+          ccache -s
+
+      - name: Package with AnyKernel3
+        run: |
+          TIMESTAMP=$(date +"%Y%m%d-%H")
+          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+            git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel
+            cp out/arch/arm64/boot/Image.gz-dtb AnyKernel/
+            [ -f out/arch/arm64/boot/dtb.img ] && cp out/arch/arm64/boot/dtb.img AnyKernel/
+            [ -f out/arch/arm64/boot/dtbo.img ] && cp out/arch/arm64/boot/dtbo.img AnyKernel/
+            cd AnyKernel
+            zip -r9 ../Miatoll-KVM-Kernel-${TIMESTAMP}.zip *
+            cd ..
+          else
+            echo "Build failed: Image.gz-dtb not found!"
+            exit 1
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Miatoll-KVM-Kernel-Artifacts
+          path: ./*.zip
