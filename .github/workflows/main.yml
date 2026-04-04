@@ -20,9 +20,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /home/runner/.cache/ccache
-          key: kernel-24.04-ccache-${{ github.sha }}
+          key: kernel-22.04-ccache-${{ github.sha }}
           restore-keys: |
-            kernel-24.04-ccache-
+            kernel-22.04-ccache-
 
       - name: Setup Toolchains
         run: |
