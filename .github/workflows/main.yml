@@ -35,34 +35,40 @@ jobs:
 
       - name: Build Kernel
         run: |
-          # ccache Setup
+          # Raise the command line argument limit to fix "Argument list too long" error
+          ulimit -s unlimited
+          
+          # ccache Setup for faster subsequent builds
           export USE_CCACHE=1
           export CCACHE_EXEC=/usr/bin/ccache
           export CCACHE_DIR=/home/runner/.cache/ccache
           ccache -M 5G
           ccache -z
 
-          # Environment Variables
+          # Environment Variables for ARM64 Cross-Compilation
           export ARCH=arm64
           export SUBARCH=arm64
           export KBUILD_BUILD_HOST=ubuntu-24-04-actions
-          export KBUILD_BUILD_USER="Ayse"
+          export KBUILD_BUILD_USER="Hamza"
           export PATH="${PWD}/clang/bin:${PWD}/gcc64/bin:${PWD}/gcc32/bin:${PATH}"
           
-          # 1. Initialize Defconfig
+          # 1. Generate Initial Configuration
           make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig Miatoll-ek.config
           
-          # 2. Inject KVM Configurations
+          # 2. Force Enable KVM & Virtualization Features
           ./scripts/config --file out/.config -e KVM
           ./scripts/config --file out/.config -e VIRTUALIZATION
           ./scripts/config --file out/.config -e KVM_ARM_HOST
           ./scripts/config --file out/.config -e KVM_ARM_PMU
           
-          # Sync config with dependencies
+          # 3. Fix "Argument list too long" by forcing Wi-Fi driver as built-in (=y)
+          ./scripts/config --file out/.config -e QCA_CLD_WLAN
+          
+          # Update config to satisfy dependencies
           make O=out ARCH=arm64 olddefconfig
 
-          # 3. Start Compilation with full LLVM toolset
-          # LLVM=1 and LLVM_IAS=1 are crucial to avoid Ubuntu 24.04 host conflicts
+          # 4. Execute Compilation using full LLVM suite
+          # We use LLVM=1 and LLVM_IAS=1 for modern Android 15 compatibility
           make -j$(nproc --all) O=out \
             ARCH=arm64 \
             CC="ccache clang" \
@@ -71,37 +77,35 @@ jobs:
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-android- \
             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
-            LD=ld.lld \
-            AR=llvm-ar \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
+            KBUILD_COMPILER_STRING="Proton-Clang-13" \
             CONFIG_NO_ERROR_ON_MISMATCH=y
           
+          # Show ccache statistics
           ccache -s
 
-      - name: Package with AnyKernel3
+            - name: Package with AnyKernel3
         run: |
-          TIMESTAMP=$(date +"%Y%m%d-%H")
-          # Check for built image (Proton Clang standard output)
+          # Create a directory for the flashable zip
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel
+          
+          # Check if the kernel image was built successfully
           if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
-            git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel
             cp out/arch/arm64/boot/Image.gz-dtb AnyKernel/
-            [ -f out/arch/arm64/boot/dtb.img ] && cp out/arch/arm64/boot/dtb.img AnyKernel/
-            [ -f out/arch/arm64/boot/dtbo.img ] && cp out/arch/arm64/boot/dtbo.img AnyKernel/
-            cd AnyKernel
-            # Adjusting device check for Miatoll
-            sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-            zip -r9 ../Miatoll-KVM-Kernel-${TIMESTAMP}.zip *
-            cd ..
+          elif [ -f out/arch/arm64/boot/Image ]; then
+            cp out/arch/arm64/boot/Image AnyKernel/
           else
-            echo "Build failed: Image.gz-dtb not found!"
+            echo "Error: Kernel image not found! Build might have failed."
             exit 1
           fi
 
-      - name: Upload Artifact
+          # Create the zip file
+          cd AnyKernel
+          zip -r9 "../Miatoll-HyperOS-KVM-$(date +%Y%m%d-%H%M).zip" * -x .git* README.md
+          cd ..
+
+      - name: Upload Kernel Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Miatoll-KVM-Kernel-Result
-          path: ./*.zip
+          name: Miatoll-HyperOS-KVM-Kernel
+          path: "*.zip"
+
