@@ -83,7 +83,7 @@ jobs:
           # Show ccache statistics
           ccache -s
 
-            - name: Package with AnyKernel3
+      - name: Package with AnyKernel3
         run: |
           # Create a directory for the flashable zip
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel
