@@ -50,7 +50,7 @@ jobs:
           export PATH="${PWD}/clang/bin:${PWD}/gcc64/bin:${PWD}/gcc32/bin:${PATH}"
           
           # 1. Initialize Defconfig
-          make O=out ARCH=arm64 vendor/xiaomi/kinetis_defconfig Ek.config
+          make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig Miatoll-ek.config
           
           # 2. Inject KVM Configurations
           ./scripts/config --file out/.config -e KVM
