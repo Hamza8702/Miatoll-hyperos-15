@@ -35,50 +35,55 @@ jobs:
 
       - name: Build Kernel
         run: |
-          # Raise the command line argument limit to fix "Argument list too long" error
+          # Fix "Argument list too long" by raising stack limits
           ulimit -s unlimited
           
-          # ccache Setup for faster subsequent builds
-          export USE_CCACHE=1
-          export CCACHE_EXEC=/usr/bin/ccache
-          export CCACHE_DIR=/home/runner/.cache/ccache
-          ccache -M 5G
-          ccache -z
-
-          # Environment Variables for ARM64 Cross-Compilation
+          # Environment Variables for Cross-Compilation
           export ARCH=arm64
           export SUBARCH=arm64
-          export KBUILD_BUILD_HOST=ubuntu-24-04-actions
+          export KBUILD_BUILD_HOST=ubuntu-22-04-actions
           export KBUILD_BUILD_USER="Hamza"
-          export PATH="${PWD}/clang/bin:${PWD}/gcc64/bin:${PWD}/gcc32/bin:${PATH}"
           
-          # 1. Generate Initial Configuration
-          make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig Miatoll-ek.config
+          # Setup Toolchain Paths
+          CLANG_DIR="${PWD}/clang"
+          GCC64_DIR="${PWD}/gcc64"
+          GCC32_DIR="${PWD}/gcc32"
+          export PATH="${CLANG_DIR}/bin:${GCC64_DIR}/bin:${GCC32_DIR}/bin:${PATH}"
           
-          # 2. Force Enable KVM & Virtualization Features
+          # 1. Initialize Defconfig
+          make O=out ARCH=arm64 vendor/xiaomi/miatoll_defconfig
+          
+          # 2. Inject HyperOS & KVM Configurations
           ./scripts/config --file out/.config -e KVM
           ./scripts/config --file out/.config -e VIRTUALIZATION
           ./scripts/config --file out/.config -e KVM_ARM_HOST
           ./scripts/config --file out/.config -e KVM_ARM_PMU
           
-          # 3. Fix "Argument list too long" by forcing Wi-Fi driver as built-in (=y)
+          # Fix for Wi-Fi driver build error (Make it built-in)
           ./scripts/config --file out/.config -e QCA_CLD_WLAN
           
-          # Update config to satisfy dependencies
+          # Sync and update configuration
           make O=out ARCH=arm64 olddefconfig
 
-          # 4. Execute Compilation using full LLVM suite
-          # We use LLVM=1 and LLVM_IAS=1 for modern Android 15 compatibility
+          # 3. Start Compilation with full LLVM Toolset
+          # We use LD=ld.lld to fix "Illegal option -L" and vdso errors
           make -j$(nproc --all) O=out \
             ARCH=arm64 \
-            CC="ccache clang" \
             LLVM=1 \
             LLVM_IAS=1 \
+            CC=clang \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-android- \
             CROSS_COMPILE_ARM32=arm-linux-androideabi- \
             KBUILD_COMPILER_STRING="Proton-Clang-13" \
             CONFIG_NO_ERROR_ON_MISMATCH=y
+
           
           # Show ccache statistics
           ccache -s
